@@ -1,0 +1,22 @@
+[package]
+name = "fsmeta"
+version = "0.1.0"
+edition = "2021"
+description = "Filesystem metadata dump and diff tool"
+license = "Apache-2.0"
+
+[[bin]]
+name = "fsmeta"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+sha1 = "0.10"
+anyhow = "1"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
