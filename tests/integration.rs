@@ -789,15 +789,23 @@ fn dump_snapshot_order_with_prefix_collision() {
     let journal_conf = paths.iter().position(|p| p.ends_with("journal.conf"));
 
     assert!(journal_dir.is_some(), "journal dir not found in list");
-    assert!(journal_profile.is_some(), "journal/profile not found in list");
+    assert!(
+        journal_profile.is_some(),
+        "journal/profile not found in list"
+    );
     assert!(journal_conf.is_some(), "journal.conf not found in list");
 
     // DFS: dir < dir/child < sibling_file
-    let (dir_pos, profile_pos, conf_pos) =
-        (journal_dir.unwrap(), journal_profile.unwrap(), journal_conf.unwrap());
+    let (dir_pos, profile_pos, conf_pos) = (
+        journal_dir.unwrap(),
+        journal_profile.unwrap(),
+        journal_conf.unwrap(),
+    );
     assert!(
         dir_pos < profile_pos && profile_pos < conf_pos,
         "DFS order violated: journal({}) profile({}) journal.conf({})",
-        dir_pos, profile_pos, conf_pos
+        dir_pos,
+        profile_pos,
+        conf_pos
     );
 }
