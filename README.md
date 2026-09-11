@@ -5,6 +5,7 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-blue.svg)](https://www.kernel.org/)
 [![Rust edition: 2021](https://img.shields.io/badge/rust-2021-orange.svg)](https://doc.rust-lang.org/edition-guide)
 [![Dependencies: 4](https://img.shields.io/badge/dependencies-4-green.svg)](Cargo.toml)
+[![Quality](https://github.com/simon3z/fsmeta/actions/workflows/quality.yml/badge.svg)](https://github.com/simon3z/fsmeta/actions/workflows/quality.yml)
 [![Tests: 87](https://img.shields.io/badge/tests-87-brightgreen.svg)](tests/)
 
 Filesystem metadata dump and diff tool for Linux.
