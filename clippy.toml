@@ -1,0 +1,10 @@
+# Project-wide clippy quality gates.
+
+# Cognitive complexity per function
+cognitive-complexity-threshold = 9
+
+# Function length
+too-many-lines-threshold = 35
+
+# Argument fan-out
+too-many-arguments-threshold = 5

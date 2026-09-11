@@ -38,6 +38,41 @@ fn dump_to(path: &std::path::Path, snapshot: &std::path::Path) {
     assert!(status.success(), "fsmeta dump failed");
 }
 
+fn assert_line_kind(stdout: &str, kind: char, path: &str, label: &str) {
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l.starts_with(kind) && l.contains(path)),
+        "{label}, got:\n{}",
+        stdout
+    );
+}
+
+// No path may appear as both `-` (missing) and `!` (leftover).
+fn assert_not_both_missing_and_leftover(stdout: &str) {
+    let missing: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with('-'))
+        .map(|l| l.trim())
+        .collect();
+    let leftover: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with('!'))
+        .map(|l| l.trim())
+        .collect();
+
+    for m in &missing {
+        let path: &str = &m[13..]; // skip "-.............  "
+        assert!(
+            !leftover.iter().any(|l| l.contains(path)),
+            "path '{}' is both missing and leftover\nmissing: {}\nleftover: {}",
+            path,
+            m,
+            leftover.iter().find(|l| l.contains(path)).unwrap()
+        );
+    }
+}
+
 fn dump_with_args(args: &[&str], snapshot: &std::path::Path) {
     let file = std::fs::File::create(snapshot).unwrap();
     let status = Command::new(bin())
@@ -601,51 +636,13 @@ fn compare_no_path_is_both_missing_and_leftover() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
 
-    // Check: no path appears as both - and !
-    let missing: Vec<&str> = stdout
-        .lines()
-        .filter(|l| l.starts_with('-'))
-        .map(|l| l.trim())
-        .collect();
-    let leftover: Vec<&str> = stdout
-        .lines()
-        .filter(|l| l.starts_with('!'))
-        .map(|l| l.trim())
-        .collect();
+    // No path may appear as both - and !
+    assert_not_both_missing_and_leftover(&stdout);
 
-    for m in &missing {
-        let path: &str = &m[13..]; // skip "-.............  "
-        assert!(
-            !leftover.iter().any(|l| l.contains(path)),
-            "path '{}' is both missing and leftover\nmissing: {}\nleftover: {}",
-            path,
-            m,
-            leftover.iter().find(|l| l.contains(path)).unwrap()
-        );
-    }
-
-    // Also verify specific expectations
-    assert!(
-        stdout
-            .lines()
-            .any(|l| l.starts_with('-') && l.contains("a.txt")),
-        "a.txt should be missing, got:\n{}",
-        stdout
-    );
-    assert!(
-        stdout
-            .lines()
-            .any(|l| l.starts_with('!') && l.contains("d.txt")),
-        "d.txt should be leftover, got:\n{}",
-        stdout
-    );
-    assert!(
-        stdout
-            .lines()
-            .any(|l| l.starts_with(" ") && l.contains("c.txt")),
-        "c.txt should be changed, got:\n{}",
-        stdout
-    );
+    // Specific expectations
+    assert_line_kind(&stdout, '-', "a.txt", "a.txt should be missing");
+    assert_line_kind(&stdout, '!', "d.txt", "d.txt should be leftover");
+    assert_line_kind(&stdout, ' ', "c.txt", "c.txt should be changed");
 }
 
 /// When comparing a snapshot against itself (no changes), output must be empty.

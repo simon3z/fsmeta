@@ -9,7 +9,5 @@ cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 cargo test
 
-# Cognitive complexity threshold (arborist).
-arborist src/ --threshold 20 --exceeds-only
-
+# Complexity/length/arg-count gates (clippy, configured in clippy.toml).
 echo "✓ All checks passed."

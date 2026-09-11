@@ -15,6 +15,11 @@ sha1 = "0.10"
 anyhow = "1"
 libc = "0.2"
 
+[lints.clippy]
+cognitive_complexity = "warn"
+too_many_lines = "warn"
+too_many_arguments = "warn"
+
 [dev-dependencies]
 tempfile = "3"
 

@@ -49,54 +49,45 @@ fn test_v1_header() {
     assert_eq!(version, 1, "version should be 1");
 }
 
+// Read one (tag, length-prefixed value) pair from the stream.
+fn read_tag_value(reader: &mut &[u8]) -> (u16, Vec<u8>) {
+    let mut tag_buf = [0u8; 2];
+    reader.read_exact(&mut tag_buf).unwrap();
+    let tag = u16::from_le_bytes(tag_buf);
+    let mut len_buf = [0u8; 4];
+    reader.read_exact(&mut len_buf).unwrap();
+    let len = u32::from_le_bytes(len_buf) as usize;
+    let mut value = vec![0u8; len];
+    reader.read_exact(&mut value).unwrap();
+    (tag, value)
+}
+
+// Read one (tag, length-prefixed value) pair and assert both.
+fn assert_field(reader: &mut &[u8], expected_tag: u16, expected_value: &[u8], label: &str) {
+    let (tag, value) = read_tag_value(reader);
+    assert_eq!(tag, expected_tag, "{label} tag");
+    assert_eq!(&value, expected_value, "{label} value");
+}
+
 #[test]
 fn test_v1_record_fields() {
     let snap = make_v1_snapshot();
     let mut reader = &snap[2..]; // skip 2-byte header
 
-    // Read first tag
-    let mut tag_buf = [0u8; 2];
-    reader.read_exact(&mut tag_buf).unwrap();
-    let tag = u16::from_le_bytes(tag_buf);
-    assert_eq!(tag, 0x0001, "first tag should be path");
+    // First tag: path
+    assert_field(&mut reader, 0x0001, b"/test", "first tag (path)");
 
-    let mut len_buf = [0u8; 4];
-    reader.read_exact(&mut len_buf).unwrap();
-    let len = u32::from_le_bytes(len_buf) as usize;
-    assert_eq!(len, 5, "path length should be 5");
+    // Second tag: type
+    assert_field(&mut reader, 0x0002, &[0], "second tag (type)");
 
-    let mut value = vec![0u8; len];
-    reader.read_exact(&mut value).unwrap();
-    assert_eq!(&value, b"/test", "path should be /test");
-
-    // Read second tag (type)
-    reader.read_exact(&mut tag_buf).unwrap();
-    let tag = u16::from_le_bytes(tag_buf);
-    assert_eq!(tag, 0x0002, "second tag should be type");
-
-    reader.read_exact(&mut len_buf).unwrap();
-    let len = u32::from_le_bytes(len_buf) as usize;
-    assert_eq!(len, 1, "type length should be 1");
-
-    let mut value = vec![0u8; len];
-    reader.read_exact(&mut value).unwrap();
-    assert_eq!(value[0], 0, "type should be Regular (0)");
-
-    // Read third tag (mode)
-    reader.read_exact(&mut tag_buf).unwrap();
-    let tag = u16::from_le_bytes(tag_buf);
+    // Third tag: mode
+    let (tag, value) = read_tag_value(&mut reader);
     assert_eq!(tag, 0x0003, "third tag should be mode");
-
-    reader.read_exact(&mut len_buf).unwrap();
-    let len = u32::from_le_bytes(len_buf) as usize;
-    assert_eq!(len, 4, "mode length should be 4");
-
-    let mut value = vec![0u8; len];
-    reader.read_exact(&mut value).unwrap();
     let mode = u32::from_le_bytes(value.try_into().unwrap());
     assert_eq!(mode, 420, "mode should be 0o644 (420)");
 
     // Read end-of-record sentinel
+    let mut tag_buf = [0u8; 2];
     reader.read_exact(&mut tag_buf).unwrap();
     let sentinel = u16::from_le_bytes(tag_buf);
     assert_eq!(sentinel, 0xFFFF, "should have end-of-record sentinel");
