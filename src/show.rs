@@ -21,15 +21,23 @@ pub fn show(snapshot_path: &str, file_path: &str) -> Result<()> {
 }
 
 fn print_record(r: &FileRecord) {
+    print_record_fields(r);
+    print_record_optionals(r);
+    print_record_xattrs(r);
+}
+
+fn print_record_fields(r: &FileRecord) {
     println!("Path:    {}", r.path);
     println!("Type:    {:?}", r.file_type);
     println!("Mode:    {:o}", r.mode);
     println!("User:    {}", r.user);
     println!("Group:   {}", r.group);
     println!("Perms:   {}", format_perms(r.perms));
-    println!("Attrs:   {}", if r.file_attrs.is_empty() { "(none)".to_string() } else { r.file_attrs.clone() });
+    println!("Attrs:   {}", attrs_display(&r.file_attrs));
     println!("Hardlinks: {}", r.hardlinks);
+}
 
+fn print_record_optionals(r: &FileRecord) {
     if let Some(size) = r.size {
         println!("Size:      {}", format_size(size));
     }
@@ -49,19 +57,32 @@ fn print_record(r: &FileRecord) {
     if let Some(major) = r.dev_major {
         println!("Device:    {}:{}", major, r.dev_minor.unwrap_or(0));
     }
+}
 
-    if !r.xattrs.is_empty() {
-        println!("Xattrs:");
-        for (key, value) in &r.xattrs {
-            let val_str = if value.len() <= 100 {
-                String::from_utf8_lossy(value).to_string()
-            } else {
-                format!("<{} bytes>", value.len())
-            };
-            println!("  {}: {}", key, val_str);
-        }
+fn print_record_xattrs(r: &FileRecord) {
+    if r.xattrs.is_empty() {
+        return;
     }
+    println!("Xattrs:");
+    for (key, value) in &r.xattrs {
+        println!("  {}: {}", key, xattr_value_display(value));
+    }
+}
 
+fn attrs_display(attrs: &str) -> String {
+    if attrs.is_empty() {
+        "(none)".to_string()
+    } else {
+        attrs.to_string()
+    }
+}
+
+fn xattr_value_display(value: &[u8]) -> String {
+    if value.len() <= 100 {
+        String::from_utf8_lossy(value).to_string()
+    } else {
+        format!("<{} bytes>", value.len())
+    }
 }
 
 /// Human-readable size with the raw byte count in parentheses.
@@ -161,7 +182,10 @@ pub fn list(snapshot_path: &str, prefixes: &[String], count_only: bool) -> Resul
     let paths: Vec<String> = records
         .into_iter()
         .filter(|r| {
-            prefixes.is_empty() || prefixes.iter().any(|prefix| r.path.starts_with(prefix.as_str()))
+            prefixes.is_empty()
+                || prefixes
+                    .iter()
+                    .any(|prefix| r.path.starts_with(prefix.as_str()))
         })
         .map(|r| r.path)
         .collect();

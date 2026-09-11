@@ -35,7 +35,7 @@ impl FileType {
 }
 
 /// A single file's metadata record.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FileRecord {
     pub path: String,
     pub file_type: FileType,

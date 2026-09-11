@@ -159,56 +159,8 @@ fn capture_metadata(path: &Path, checksum_size_limit: u64) -> Result<FileRecord>
         ..Default::default()
     };
 
-    use std::os::unix::fs::MetadataExt;
-    let raw_mode = meta.mode();
-    let raw_uid = meta.uid();
-    let raw_gid = meta.gid();
-    let raw_nlink = meta.nlink();
-    let raw_rdev = meta.rdev();
-
-    record.mode = raw_mode;
-    record.hardlinks = raw_nlink as u32;
-    record.user = get_username(raw_uid);
-    record.group = get_groupname(raw_gid);
-    record.perms = special_bits(raw_mode);
-    record.size = Some(meta.size());
-    record.mtime = Some(meta.mtime());
-
-    match file_type {
-        FileType::Regular => {
-            let size = meta.size();
-
-            if size <= checksum_size_limit {
-                match checksum::sha1_checksum(path) {
-                    Ok(c) => {
-                        record.checksum = Some(c);
-                    }
-                    Err(e) => {
-                        eprintln!("warning: checksum failed for {}: {}", path.display(), e);
-                        record.checksum_skipped = true;
-                    }
-                }
-            } else {
-                record.checksum_skipped = true;
-            }
-        }
-        FileType::Symlink => match fs::read_link(path) {
-            Ok(target) => {
-                record.symlink_target = Some(target.to_string_lossy().to_string());
-            }
-            Err(e) => {
-                eprintln!("warning: readlink failed for {}: {}", path.display(), e);
-            }
-        },
-        FileType::CharDev | FileType::BlockDev => {
-            let rdev = raw_rdev;
-            let major = ((rdev >> 8) & 0xfff) as u32;
-            let minor = ((rdev & 0xff) | ((rdev >> 12) & 0xfff00)) as u32;
-            record.dev_major = Some(major);
-            record.dev_minor = Some(minor);
-        }
-        _ => {}
-    }
+    fill_core_fields(&meta, &mut record);
+    fill_type_specific_fields(path, file_type, &meta, checksum_size_limit, &mut record);
 
     // xattrs
     record.xattrs = get_all_xattrs(path);
@@ -217,6 +169,64 @@ fn capture_metadata(path: &Path, checksum_size_limit: u64) -> Result<FileRecord>
     record.file_attrs = get_lsattr(path);
 
     Ok(record)
+}
+
+fn fill_core_fields(meta: &std::fs::Metadata, record: &mut FileRecord) {
+    use std::os::unix::fs::MetadataExt;
+
+    record.mode = meta.mode();
+    record.hardlinks = meta.nlink() as u32;
+    record.user = get_username(meta.uid());
+    record.group = get_groupname(meta.gid());
+    record.perms = special_bits(meta.mode());
+    record.size = Some(meta.size());
+    record.mtime = Some(meta.mtime());
+}
+
+fn fill_type_specific_fields(
+    path: &Path,
+    file_type: FileType,
+    meta: &std::fs::Metadata,
+    checksum_size_limit: u64,
+    record: &mut FileRecord,
+) {
+    use std::os::unix::fs::MetadataExt;
+
+    match file_type {
+        FileType::Regular => set_checksum(path, meta.size(), checksum_size_limit, record),
+        FileType::Symlink => set_symlink_target(path, record),
+        FileType::CharDev | FileType::BlockDev => {
+            let rdev = meta.rdev();
+            record.dev_major = Some(((rdev >> 8) & 0xfff) as u32);
+            record.dev_minor = Some(((rdev & 0xff) | ((rdev >> 12) & 0xfff00)) as u32);
+        }
+        _ => {}
+    }
+}
+
+fn set_checksum(path: &Path, size: u64, checksum_size_limit: u64, record: &mut FileRecord) {
+    if size > checksum_size_limit {
+        record.checksum_skipped = true;
+        return;
+    }
+    match checksum::sha1_checksum(path) {
+        Ok(c) => record.checksum = Some(c),
+        Err(e) => {
+            eprintln!("warning: checksum failed for {}: {}", path.display(), e);
+            record.checksum_skipped = true;
+        }
+    }
+}
+
+fn set_symlink_target(path: &Path, record: &mut FileRecord) {
+    match fs::read_link(path) {
+        Ok(target) => {
+            record.symlink_target = Some(target.to_string_lossy().to_string());
+        }
+        Err(e) => {
+            eprintln!("warning: readlink failed for {}: {}", path.display(), e);
+        }
+    }
 }
 
 /// Walk configuration shared by `dump` and `compare`.
@@ -324,7 +334,17 @@ fn get_all_xattrs(path: &Path) -> Vec<(String, Vec<u8>)> {
         Err(_) => return xattrs,
     };
 
-    // Try llistxattr (syscall 233 on x86_64) to list xattr names
+    for name in list_xattr_names(&c_path) {
+        if let Some(value) = read_xattr(&c_path, &name) {
+            xattrs.push((name, value));
+        }
+    }
+    xattrs
+}
+
+// Try llistxattr (syscall 233 on x86_64) to list xattr names;
+// fall back to known names when it's unavailable (e.g. btrfs).
+fn list_xattr_names(c_path: &CString) -> Vec<String> {
     let mut buf = vec![0u8; 4096];
     let ret: libc::ssize_t = unsafe {
         libc::syscall(
@@ -335,7 +355,7 @@ fn get_all_xattrs(path: &Path) -> Vec<(String, Vec<u8>)> {
         ) as libc::ssize_t
     };
 
-    let names: Vec<String> = if ret > 0 {
+    if ret > 0 {
         let names_str = unsafe { std::str::from_utf8_unchecked(&buf[..ret as usize]) };
         names_str
             .split('\0')
@@ -343,30 +363,26 @@ fn get_all_xattrs(path: &Path) -> Vec<(String, Vec<u8>)> {
             .map(String::from)
             .collect()
     } else {
-        // Fallback: try known xattr names
         KNOWN_XATTRS.iter().map(|s| s.to_string()).collect()
-    };
-
-    for name in names {
-        let c_name = match CString::new(name.as_bytes()) {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-        let mut val_buf = vec![0u8; 65536];
-        let val_ret = unsafe {
-            libc::lgetxattr(
-                c_path.as_ptr(),
-                c_name.as_ptr() as *mut libc::c_char,
-                val_buf.as_mut_ptr() as *mut libc::c_void,
-                val_buf.len() as libc::size_t,
-            )
-        };
-        if val_ret > 0 {
-            let val = val_buf[..val_ret as usize].to_vec();
-            xattrs.push((name, val));
-        }
     }
-    xattrs
+}
+
+fn read_xattr(c_path: &CString, name: &str) -> Option<Vec<u8>> {
+    let c_name = CString::new(name.as_bytes()).ok()?;
+    let mut val_buf = vec![0u8; 65536];
+    let val_ret = unsafe {
+        libc::lgetxattr(
+            c_path.as_ptr(),
+            c_name.as_ptr() as *mut libc::c_char,
+            val_buf.as_mut_ptr() as *mut libc::c_void,
+            val_buf.len() as libc::size_t,
+        )
+    };
+    if val_ret > 0 {
+        Some(val_buf[..val_ret as usize].to_vec())
+    } else {
+        None
+    }
 }
 
 // --- lsattr via ioctl ---

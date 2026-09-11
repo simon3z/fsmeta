@@ -55,6 +55,19 @@ pub fn write_trailer<W: Write>(file_count: u64, w: &mut W) -> Result<()> {
 
 /// Write a single record.
 pub fn write_record<W: Write>(r: &FileRecord, w: &mut W) -> Result<()> {
+    write_record_fixed(r, w)?;
+    write_record_optionals(r, w)?;
+    write_record_xattrs(r, w)?;
+    write_field(TAG_FILE_ATTRS, r.file_attrs.as_bytes(), w)?;
+
+    // End-of-record sentinel
+    w.write_all(&TAG_END.to_le_bytes())
+        .context("write end-of-record")?;
+
+    Ok(())
+}
+
+fn write_record_fixed<W: Write>(r: &FileRecord, w: &mut W) -> Result<()> {
     write_field(TAG_PATH, r.path.as_bytes(), w)?;
     write_field(TAG_TYPE, &[r.file_type.to_u8()], w)?;
     write_field(TAG_MODE, &r.mode.to_le_bytes(), w)?;
@@ -62,7 +75,10 @@ pub fn write_record<W: Write>(r: &FileRecord, w: &mut W) -> Result<()> {
     write_field(TAG_GROUP, r.group.as_bytes(), w)?;
     write_field(TAG_PERMS, &[r.perms], w)?;
     write_field(TAG_HARDLINKS, &r.hardlinks.to_le_bytes(), w)?;
+    Ok(())
+}
 
+fn write_record_optionals<W: Write>(r: &FileRecord, w: &mut W) -> Result<()> {
     if let Some(size) = r.size {
         write_field(TAG_SIZE, &size.to_le_bytes(), w)?;
     }
@@ -84,6 +100,10 @@ pub fn write_record<W: Write>(r: &FileRecord, w: &mut W) -> Result<()> {
     if let Some(minor) = r.dev_minor {
         write_field(TAG_DEV_MINOR, &minor.to_le_bytes(), w)?;
     }
+    Ok(())
+}
+
+fn write_record_xattrs<W: Write>(r: &FileRecord, w: &mut W) -> Result<()> {
     for (key, value) in &r.xattrs {
         let mut buf = Vec::new();
         buf.extend_from_slice(&(key.len() as u16).to_le_bytes());
@@ -91,12 +111,6 @@ pub fn write_record<W: Write>(r: &FileRecord, w: &mut W) -> Result<()> {
         buf.extend_from_slice(value);
         write_field(TAG_XATTR, &buf, w)?;
     }
-    write_field(TAG_FILE_ATTRS, r.file_attrs.as_bytes(), w)?;
-
-    // End-of-record sentinel
-    w.write_all(&TAG_END.to_le_bytes())
-        .context("write end-of-record")?;
-
     Ok(())
 }
 
@@ -170,71 +184,44 @@ fn read_value<R: Read>(r: &mut R) -> Result<(u32, Vec<u8>)> {
 
 fn parse_field(r: &mut FileRecord, tag: u16, value: &[u8]) -> Result<()> {
     match tag {
-        TAG_PATH => {
-            r.path = String::from_utf8(value.to_vec()).context("path is not valid UTF-8")?;
-        }
-        TAG_TYPE => {
-            r.file_type = FileType::from(value[0]);
-        }
-        TAG_MODE => {
-            r.mode = u32::from_le_bytes(value.try_into().unwrap());
-        }
-        TAG_USER => {
-            r.user = String::from_utf8(value.to_vec()).context("user is not valid UTF-8")?;
-        }
-        TAG_GROUP => {
-            r.group = String::from_utf8(value.to_vec()).context("group is not valid UTF-8")?;
-        }
-        TAG_PERMS => {
-            r.perms = value[0];
-        }
-        TAG_HARDLINKS => {
-            r.hardlinks = u32::from_le_bytes(value.try_into().unwrap());
-        }
-        TAG_SIZE => {
-            r.size = Some(u64::from_le_bytes(value.try_into().unwrap()));
-        }
-        TAG_MTIME => {
-            r.mtime = Some(i64::from_le_bytes(value.try_into().unwrap()));
-        }
-        TAG_CHECKSUM => {
-            r.checksum = Some(value.to_vec());
-        }
-        TAG_SYMLINK => {
-            r.symlink_target = Some(
-                String::from_utf8(value.to_vec()).context("symlink_target is not valid UTF-8")?,
-            );
-        }
-        TAG_DEV_MAJOR => {
-            r.dev_major = Some(u32::from_le_bytes(value.try_into().unwrap()));
-        }
-        TAG_DEV_MINOR => {
-            r.dev_minor = Some(u32::from_le_bytes(value.try_into().unwrap()));
-        }
-        TAG_XATTR => {
-            if value.len() < 2 {
-                bail!("xattr value too short");
-            }
-            let key_len = u16::from_le_bytes([value[0], value[1]]) as usize;
-            if value.len() < 2 + key_len {
-                bail!("xattr key extends beyond value");
-            }
-            let key = String::from_utf8(value[2..2 + key_len].to_vec())
-                .context("xattr key is not valid UTF-8")?;
-            let val = value[2 + key_len..].to_vec();
-            r.xattrs.push((key, val));
-        }
-        TAG_FILE_ATTRS => {
-            r.file_attrs =
-                String::from_utf8(value.to_vec()).context("file_attrs is not valid UTF-8")?;
-        }
-        TAG_CHECKSUM_SKIPPED => {
-            r.checksum_skipped = true;
-        }
+        TAG_PATH => r.path = parse_string(value, "path")?,
+        TAG_TYPE => r.file_type = FileType::from(value[0]),
+        TAG_MODE => r.mode = u32::from_le_bytes(value.try_into().unwrap()),
+        TAG_USER => r.user = parse_string(value, "user")?,
+        TAG_GROUP => r.group = parse_string(value, "group")?,
+        TAG_PERMS => r.perms = value[0],
+        TAG_HARDLINKS => r.hardlinks = u32::from_le_bytes(value.try_into().unwrap()),
+        TAG_SIZE => r.size = Some(u64::from_le_bytes(value.try_into().unwrap())),
+        TAG_MTIME => r.mtime = Some(i64::from_le_bytes(value.try_into().unwrap())),
+        TAG_CHECKSUM => r.checksum = Some(value.to_vec()),
+        TAG_SYMLINK => r.symlink_target = Some(parse_string(value, "symlink_target")?),
+        TAG_DEV_MAJOR => r.dev_major = Some(u32::from_le_bytes(value.try_into().unwrap())),
+        TAG_DEV_MINOR => r.dev_minor = Some(u32::from_le_bytes(value.try_into().unwrap())),
+        TAG_XATTR => parse_xattr(r, value)?,
+        TAG_FILE_ATTRS => r.file_attrs = parse_string(value, "file_attrs")?,
+        TAG_CHECKSUM_SKIPPED => r.checksum_skipped = true,
         _ => {
             // Unknown tag: skip (forward compatibility)
         }
     }
+    Ok(())
+}
+
+fn parse_string(value: &[u8], field: &str) -> Result<String> {
+    String::from_utf8(value.to_vec()).with_context(|| format!("{field} is not valid UTF-8"))
+}
+
+fn parse_xattr(r: &mut FileRecord, value: &[u8]) -> Result<()> {
+    if value.len() < 2 {
+        bail!("xattr value too short");
+    }
+    let key_len = u16::from_le_bytes([value[0], value[1]]) as usize;
+    if value.len() < 2 + key_len {
+        bail!("xattr key extends beyond value");
+    }
+    let key = parse_string(&value[2..2 + key_len], "xattr key")?;
+    let val = value[2 + key_len..].to_vec();
+    r.xattrs.push((key, val));
     Ok(())
 }
 
@@ -257,14 +244,20 @@ pub(crate) fn dfs_after(a: &str, b: &str) -> bool {
 
 /// Read a full snapshot from a file path (or "-" for stdin) into a path → record index.
 pub fn read_snapshot(path: &str) -> Result<Vec<FileRecord>> {
-    let inner: Box<dyn Read> = if path == "-" {
-        Box::new(std::io::stdin())
-    } else {
-        Box::new(std::fs::File::open(path)?)
-    };
-    let mut reader = BufReader::new(inner);
+    let mut reader = BufReader::new(open_snapshot_reader(path)?);
+    check_snapshot_version(&mut reader)?;
+    read_all_records(&mut reader)
+}
 
-    // Read version
+fn open_snapshot_reader(path: &str) -> Result<Box<dyn Read>> {
+    if path == "-" {
+        Ok(Box::new(std::io::stdin()))
+    } else {
+        Ok(Box::new(std::fs::File::open(path)?))
+    }
+}
+
+fn check_snapshot_version(reader: &mut BufReader<Box<dyn Read>>) -> Result<()> {
     let mut version_buf = [0u8; 2];
     reader
         .read_exact(&mut version_buf)
@@ -273,25 +266,20 @@ pub fn read_snapshot(path: &str) -> Result<Vec<FileRecord>> {
     if version > VERSION {
         bail!("unsupported snapshot version {}", version);
     }
+    Ok(())
+}
 
-    // Read records until trailer or EOF
+// Read records until trailer or EOF, validating DFS order as we go.
+fn read_all_records(reader: &mut BufReader<Box<dyn Read>>) -> Result<Vec<FileRecord>> {
     let mut records: Vec<FileRecord> = Vec::new();
     let mut count = 0u64;
     let mut trailer_count: Option<u64> = None;
-    while let Some(item) = read_record(&mut reader)? {
+    while let Some(item) = read_record(reader)? {
         match item {
             ReadItem::Record(record) => {
                 count += 1;
                 let record: FileRecord = *record;
-                // Validate DFS ordering (format invariant)
-                if let Some(prev) = records.last() {
-                    if !dfs_after(&prev.path, &record.path) {
-                        bail!(
-                            "snapshot records are not in DFS order at \"{}\" (previous: \"{}\")",
-                            record.path, prev.path
-                        );
-                    }
-                }
+                check_dfs_order(&records, &record)?;
                 records.push(record);
             }
             ReadItem::Trailer(file_count) => {
@@ -300,8 +288,24 @@ pub fn read_snapshot(path: &str) -> Result<Vec<FileRecord>> {
             }
         }
     }
+    check_trailer_count(count, trailer_count);
+    Ok(records)
+}
 
-    // Validate trailer count
+fn check_dfs_order(records: &[FileRecord], record: &FileRecord) -> Result<()> {
+    if let Some(prev) = records.last() {
+        if !dfs_after(&prev.path, &record.path) {
+            bail!(
+                "snapshot records are not in DFS order at \"{}\" (previous: \"{}\")",
+                record.path,
+                prev.path
+            );
+        }
+    }
+    Ok(())
+}
+
+fn check_trailer_count(count: u64, trailer_count: Option<u64>) {
     if let Some(expected) = trailer_count {
         if count != expected {
             eprintln!(
@@ -310,8 +314,6 @@ pub fn read_snapshot(path: &str) -> Result<Vec<FileRecord>> {
             );
         }
     }
-
-    Ok(records)
 }
 
 #[cfg(test)]
@@ -358,15 +360,7 @@ mod tests {
         };
         let out = roundtrip(vec![record.clone()]);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].path, record.path);
-        assert_eq!(out[0].file_type, FileType::Regular);
-        assert_eq!(out[0].mode, 0o644);
-        assert_eq!(out[0].user, "root");
-        assert_eq!(out[0].group, "root");
-        assert_eq!(out[0].hardlinks, 1);
-        assert_eq!(out[0].size, Some(1234));
-        assert_eq!(out[0].mtime, Some(1700000000));
-        assert_eq!(out[0].checksum, Some(vec![0xde, 0xad, 0xbe, 0xef]));
+        assert_eq!(out[0], record);
     }
 
     #[test]
@@ -493,15 +487,23 @@ mod tests {
         // Invalid:   /etc/journal.conf, /etc/journal  (file before its sibling dir)
         let mut buf = Vec::new();
         write_header(&mut buf).unwrap();
-        write_record(&FileRecord {
-            path: "/etc/journal.conf".into(),
-            ..Default::default()
-        }, &mut buf).unwrap();
-        write_record(&FileRecord {
-            path: "/etc/journal".into(),
-            file_type: FileType::Directory,
-            ..Default::default()
-        }, &mut buf).unwrap();
+        write_record(
+            &FileRecord {
+                path: "/etc/journal.conf".into(),
+                ..Default::default()
+            },
+            &mut buf,
+        )
+        .unwrap();
+        write_record(
+            &FileRecord {
+                path: "/etc/journal".into(),
+                file_type: FileType::Directory,
+                ..Default::default()
+            },
+            &mut buf,
+        )
+        .unwrap();
         write_trailer(2, &mut buf).unwrap();
 
         // Write to a temp file and try to read
@@ -512,7 +514,11 @@ mod tests {
         let result = read_snapshot(path.to_str().unwrap());
         assert!(result.is_err());
         let err = format!("{}", result.err().unwrap());
-        assert!(err.contains("not in DFS order"), "unexpected error: {}", err);
+        assert!(
+            err.contains("not in DFS order"),
+            "unexpected error: {}",
+            err
+        );
     }
 
     #[test]
@@ -520,14 +526,22 @@ mod tests {
         // Same path twice is not strictly increasing DFS order
         let mut buf = Vec::new();
         write_header(&mut buf).unwrap();
-        write_record(&FileRecord {
-            path: "/a".into(),
-            ..Default::default()
-        }, &mut buf).unwrap();
-        write_record(&FileRecord {
-            path: "/a".into(),
-            ..Default::default()
-        }, &mut buf).unwrap();
+        write_record(
+            &FileRecord {
+                path: "/a".into(),
+                ..Default::default()
+            },
+            &mut buf,
+        )
+        .unwrap();
+        write_record(
+            &FileRecord {
+                path: "/a".into(),
+                ..Default::default()
+            },
+            &mut buf,
+        )
+        .unwrap();
         write_trailer(2, &mut buf).unwrap();
 
         let dir = tempfile::tempdir().unwrap();

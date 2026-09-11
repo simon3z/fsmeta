@@ -27,7 +27,9 @@ impl MergeCompare {
         let mut lines = Vec::new();
         // Advance cursor: emit baseline records that come before this live record
         // in DFS order (i.e., they are in a subtree the live walk has left).
-        while self.cursor < self.baseline.len() && crate::format::dfs_after(&self.baseline[self.cursor].path, &record.path) {
+        while self.cursor < self.baseline.len()
+            && crate::format::dfs_after(&self.baseline[self.cursor].path, &record.path)
+        {
             let missing_path = &self.baseline[self.cursor].path;
             lines.push(format!("-{}  {}", ".............", missing_path));
             self.cursor += 1;
@@ -50,14 +52,15 @@ impl MergeCompare {
     pub fn finish(&mut self) -> Vec<String> {
         let mut lines = Vec::new();
         while self.cursor < self.baseline.len() {
-            lines.push(format!("-{}  {}", ".............", self.baseline[self.cursor].path));
+            lines.push(format!(
+                "-{}  {}",
+                ".............", self.baseline[self.cursor].path
+            ));
             self.cursor += 1;
         }
         lines
     }
 }
-
-
 
 /// One diff line for a record that appears in both baseline and current,
 /// or None if unchanged.
@@ -200,40 +203,66 @@ fn format_detail_basic(base: &FileRecord, curr: &FileRecord, details: &mut Vec<S
 }
 
 fn format_detail_extended(base: &FileRecord, curr: &FileRecord, details: &mut Vec<String>) {
-    // S: symlink target
-    if (base.file_type == FileType::Symlink || curr.file_type == FileType::Symlink)
-        && base.symlink_target != curr.symlink_target
-    {
+    push_symlink_diff(base, curr, details);
+    push_checksum_diff(base, curr, details);
+    push_xattrs_diff(base, curr, details);
+    push_file_attrs_diff(base, curr, details);
+    push_file_type_diff(base, curr, details);
+}
+
+// S: symlink target
+fn push_symlink_diff(base: &FileRecord, curr: &FileRecord, details: &mut Vec<String>) {
+    let either_symlink = base.file_type == FileType::Symlink || curr.file_type == FileType::Symlink;
+    if either_symlink && base.symlink_target != curr.symlink_target {
         details.push(format!(
             "S:{}→{}",
             base.symlink_target.as_deref().unwrap_or("<none>"),
             curr.symlink_target.as_deref().unwrap_or("<none>")
         ));
     }
-    // C: checksum
-    if base.file_type == FileType::Regular && curr.file_type == FileType::Regular {
-        if base.checksum_skipped || curr.checksum_skipped {
-            details.push("C:? (checksum skipped)".to_string());
-        } else if base.checksum != curr.checksum {
-            let b_hex = hex(&base.checksum);
-            let c_hex = hex(&curr.checksum);
-            let b_short = if b_hex.len() > 7 { &b_hex[..7] } else { &b_hex };
-            let c_short = if c_hex.len() > 7 { &c_hex[..7] } else { &c_hex };
-            details.push(format!("C:{}→{}", b_short, c_short));
-        }
+}
+
+// C: checksum (regular files only)
+fn push_checksum_diff(base: &FileRecord, curr: &FileRecord, details: &mut Vec<String>) {
+    if base.file_type != FileType::Regular || curr.file_type != FileType::Regular {
+        return;
     }
-    // X: xattrs
+    if base.checksum_skipped || curr.checksum_skipped {
+        details.push("C:? (checksum skipped)".to_string());
+    } else if base.checksum != curr.checksum {
+        details.push(format!(
+            "C:{}→{}",
+            short_hex(&base.checksum),
+            short_hex(&curr.checksum)
+        ));
+    }
+}
+
+// X: xattrs
+fn push_xattrs_diff(base: &FileRecord, curr: &FileRecord, details: &mut Vec<String>) {
     if xattr_map(base) != xattr_map(curr) {
         details.push("X:xattrs differ".to_string());
     }
-    // A: file attrs
+}
+
+// A: file attrs
+fn push_file_attrs_diff(base: &FileRecord, curr: &FileRecord, details: &mut Vec<String>) {
     if base.file_attrs != curr.file_attrs {
         details.push(format!("A:{}→{}", base.file_attrs, curr.file_attrs));
     }
-    // F: file type
+}
+
+// F: file type
+fn push_file_type_diff(base: &FileRecord, curr: &FileRecord, details: &mut Vec<String>) {
     if base.file_type != curr.file_type {
         details.push(format!("F:{:?}→{:?}", base.file_type, curr.file_type));
     }
+}
+
+/// First 7 hex chars of a checksum (or the whole thing if shorter).
+fn short_hex(checksum: &Option<Vec<u8>>) -> String {
+    let hex = hex(checksum);
+    hex.get(..7).map(String::from).unwrap_or(hex)
 }
 
 fn hex(checksum: &Option<Vec<u8>>) -> String {
@@ -402,7 +431,11 @@ mod tests {
     fn merge_directory_tree_structure() {
         // DFS order: /home/user, /home/user/a.txt, /home/user/b.txt, /home/user/c.txt
         let baseline = vec![
-            FileRecord { path: "/home/user".into(), file_type: FileType::Directory, ..Default::default() },
+            FileRecord {
+                path: "/home/user".into(),
+                file_type: FileType::Directory,
+                ..Default::default()
+            },
             reg("/home/user/a.txt", 1),
             reg("/home/user/b.txt", 2),
             reg("/home/user/c.txt", 3),
@@ -410,7 +443,11 @@ mod tests {
         let mut mc = MergeCompare::new(baseline);
 
         // Directory matches
-        let dir_record = FileRecord { path: "/home/user".into(), file_type: FileType::Directory, ..Default::default() };
+        let dir_record = FileRecord {
+            path: "/home/user".into(),
+            file_type: FileType::Directory,
+            ..Default::default()
+        };
         assert!(mc.process(&dir_record, false).is_empty());
 
         assert!(mc.process(&reg("/home/user/a.txt", 1), false).is_empty());
@@ -433,17 +470,27 @@ mod tests {
     fn merge_dfs_order_prefix_collision() {
         // DFS order: journal (dir), journal/profile (file), journal.conf (file)
         let baseline = vec![
-            FileRecord { path: "/etc/journal".into(), file_type: FileType::Directory, ..Default::default() },
+            FileRecord {
+                path: "/etc/journal".into(),
+                file_type: FileType::Directory,
+                ..Default::default()
+            },
             reg("/etc/journal/profile", 10),
             reg("/etc/journal.conf", 20),
         ];
         let mut mc = MergeCompare::new(baseline);
 
         // All match — no diffs
-        let dir = FileRecord { path: "/etc/journal".into(), file_type: FileType::Directory, ..Default::default() };
+        let dir = FileRecord {
+            path: "/etc/journal".into(),
+            file_type: FileType::Directory,
+            ..Default::default()
+        };
         assert!(mc.process(&dir, false).is_empty());
 
-        assert!(mc.process(&reg("/etc/journal/profile", 10), false).is_empty());
+        assert!(mc
+            .process(&reg("/etc/journal/profile", 10), false)
+            .is_empty());
         assert!(mc.process(&reg("/etc/journal.conf", 20), false).is_empty());
         assert!(mc.finish().is_empty());
     }
@@ -454,13 +501,21 @@ mod tests {
         // DFS order: journal (dir), journal/profile (file), journal.conf (file)
         // Live: journal (dir), journal.conf  (profile missing)
         let baseline = vec![
-            FileRecord { path: "/etc/journal".into(), file_type: FileType::Directory, ..Default::default() },
+            FileRecord {
+                path: "/etc/journal".into(),
+                file_type: FileType::Directory,
+                ..Default::default()
+            },
             reg("/etc/journal/profile", 10),
             reg("/etc/journal.conf", 20),
         ];
         let mut mc = MergeCompare::new(baseline);
 
-        let dir = FileRecord { path: "/etc/journal".into(), file_type: FileType::Directory, ..Default::default() };
+        let dir = FileRecord {
+            path: "/etc/journal".into(),
+            file_type: FileType::Directory,
+            ..Default::default()
+        };
         assert!(mc.process(&dir, false).is_empty());
 
         // journal.conf: should emit journal/profile as missing, then match journal.conf
