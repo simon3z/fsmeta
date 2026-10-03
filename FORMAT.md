@@ -141,7 +141,7 @@ fsmeta list <SNAPSHOT> [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--exclude=PATH` | — | Skip subtree in live walk (repeatable) |
+| `--exclude=PATH` | — | Skip subtree in live walk and baseline (repeatable) |
 | `--verbose` | off | Inline detail for flagged fields |
 
 ### diff Options
@@ -188,7 +188,7 @@ Flag positions (0-indexed):
 | 6   | L    | hard link count differs |
 | 7   | T    | mtime differs |
 | 8   | S    | symlink target differs |
-| 9   | C/?  | content differs (C=mismatch, ?=skipped) |
+| 9   | C/?  | content differs: C=checksum mismatch, ?=checksum skipped (either side) |
 | 10  | X    | xattrs differ |
 | 11  | A    | file attributes differ (lsattr) |
 | 12  | F    | file type changed |

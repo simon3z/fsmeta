@@ -625,6 +625,38 @@ mod tests {
     }
 
     #[test]
+    fn flags_checksum_one_skipped_flag_question() {
+        let mut a = regular("/f", 100, 0o644, b"abc");
+        a.checksum_skipped = true;
+        let b = regular("/f", 100, 0o644, b"abc");
+        let flags = compare_flags(&a, &b);
+        assert_eq!(flag_at(&flags, 9), '?');
+    }
+
+    #[test]
+    fn flags_checksum_both_skipped_flag_question() {
+        let mut a = regular("/f", 100, 0o644, b"");
+        a.checksum_skipped = true;
+        let mut b = regular("/f", 100, 0o644, b"");
+        b.checksum_skipped = true;
+        let flags = compare_flags(&a, &b);
+        assert_eq!(flag_at(&flags, 9), '?');
+        let mut mc = MergeCompare::new(vec![a.clone()]);
+        let lines = mc.process(&b, false);
+        assert!(lines.iter().any(|l| l.contains('?')));
+    }
+
+    #[test]
+    fn verbose_detail_both_skipped_checksum_note() {
+        let mut a = regular("/f", 100, 0o644, b"");
+        a.checksum_skipped = true;
+        let mut b = regular("/f", 100, 0o644, b"");
+        b.checksum_skipped = true;
+        let detail = format_detail(&a, &b);
+        assert!(detail.contains("C:? (checksum skipped)"));
+    }
+
+    #[test]
     fn flags_xattr_change() {
         let mut a = regular("/f", 100, 0o644, b"abc");
         a.xattrs.push(("user.test".into(), b"1".to_vec()));

@@ -74,6 +74,18 @@ fn walk_stdin(tx: &mpsc::Sender<FileRecord>, checksum_size_limit: u64, verbose: 
     }
 }
 
+/// True if `path` equals an excluded root or lies under it. Trailing
+/// slashes on the exclude are ignored; "/" excludes everything.
+pub fn is_excluded(path: &str, excludes: &[String]) -> bool {
+    excludes.iter().any(|excl| {
+        let e = excl.trim_end_matches('/');
+        if e.is_empty() {
+            return true;
+        }
+        path == e || path.starts_with(&format!("{e}/"))
+    })
+}
+
 /// Recursively walk a directory, capturing metadata and sending records.
 fn walk_dir(
     path: &Path,
@@ -82,10 +94,8 @@ fn walk_dir(
     checksum_size_limit: u64,
     verbose: bool,
 ) -> bool {
-    for excl in excludes {
-        if path.starts_with(Path::new(excl)) {
-            return true;
-        }
+    if is_excluded(&path.to_string_lossy(), excludes) {
+        return true;
     }
 
     // Capture this file/dir
@@ -589,5 +599,30 @@ mod tests {
         assert!(paths.iter().any(|p| p.ends_with("journal.conf")));
         assert!(paths.iter().any(|p| p.ends_with("journal")));
         assert!(paths.iter().any(|p| p.ends_with("journal/profile")));
+    }
+
+    #[test]
+    fn is_excluded_exact_and_descendant() {
+        let excludes = vec!["/run".to_string()];
+        assert!(is_excluded("/run", &excludes));
+        assert!(is_excluded("/run/hosts", &excludes));
+        assert!(!is_excluded("/running", &excludes));
+        assert!(!is_excluded("/runx", &excludes));
+    }
+
+    #[test]
+    fn is_excluded_trailing_slash_and_root() {
+        let excludes = vec!["/run/".to_string()];
+        assert!(is_excluded("/run", &excludes));
+        assert!(is_excluded("/run/hosts", &excludes));
+        let root = vec!["/".to_string()];
+        assert!(is_excluded("/anything", &root));
+    }
+
+    #[test]
+    fn is_excluded_no_match() {
+        let excludes = vec!["/proc".to_string(), "/sys".to_string()];
+        assert!(!is_excluded("/home/user/file", &excludes));
+        assert!(!is_excluded("/procfs", &excludes));
     }
 }

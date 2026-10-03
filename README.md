@@ -73,7 +73,7 @@ fsmeta list <SNAPSHOT> [OPTIONS]
 ### Examples
 
 ```sh
-# Dump a filesystem (excludes /proc, /sys, /dev/shm, /run by convention)
+# Dump a filesystem
 fsmeta dump --exclude=/proc --exclude=/sys / > baseline.fs
 
 # Dump from stdin (pipe find output)
@@ -105,7 +105,7 @@ fsmeta list baseline.fs --count
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--exclude=PATH` | — | Skip subtree in live walk (repeatable) |
+| `--exclude=PATH` | — | Skip subtree in live walk and baseline (repeatable) |
 | `--verbose` | off | Inline detail for flagged fields |
 
 ### diff Options
@@ -144,7 +144,7 @@ PREFIX FLAGS  PATH
 | 6   | L    | hard link count differs |
 | 7   | T    | mtime differs |
 | 8   | S    | symlink target differs |
-| 9   | C/?  | content differs (C=mismatch, ?=skipped) |
+| 9   | C/?  | content differs: C=checksum mismatch, ?=checksum skipped (either side) |
 | 10  | X    | xattrs differ |
 | 11  | A    | file attributes differ (lsattr) |
 | 12  | F    | file type changed |
