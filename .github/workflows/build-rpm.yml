@@ -1,0 +1,53 @@
+name: Build RPM
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-rpm:
+    name: Build RPM
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      # git must be in PATH BEFORE checkout, or it falls back to
+      # the REST API and no .git directory is created
+      - name: Install build deps
+        run: |
+          dnf install -y cargo rust-packaging rpm-build rpmlint xz git
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Allow git in container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build RPM
+        run: ./rpm-build.sh
+
+      - name: Lint spec + RPM
+        continue-on-error: true
+        run: ./rpm-build.sh lint
+
+      # rpm-build.sh uses a workspace-local topdir (./rpmbuild), not $HOME,
+      # so artifact paths must be relative to the checkout
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fsmeta-rpm
+          path: |
+            rpmbuild/RPMS/x86_64/fsmeta-*.rpm
+            rpmbuild/SRPMS/fsmeta-*.src.rpm
+
+      - name: Attach RPM to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            rpmbuild/RPMS/x86_64/fsmeta-*.x86_64.rpm
